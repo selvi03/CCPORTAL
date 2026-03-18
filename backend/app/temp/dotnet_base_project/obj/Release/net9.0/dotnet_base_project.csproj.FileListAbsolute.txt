@@ -1,0 +1,14 @@
+D:\pythonprojects\Campus connection\LMSProject2\backend\app\temp\dotnet_base_project\bin\Release\net9.0\dotnet_base_project.exe
+D:\pythonprojects\Campus connection\LMSProject2\backend\app\temp\dotnet_base_project\bin\Release\net9.0\dotnet_base_project.deps.json
+D:\pythonprojects\Campus connection\LMSProject2\backend\app\temp\dotnet_base_project\bin\Release\net9.0\dotnet_base_project.runtimeconfig.json
+D:\pythonprojects\Campus connection\LMSProject2\backend\app\temp\dotnet_base_project\bin\Release\net9.0\dotnet_base_project.dll
+D:\pythonprojects\Campus connection\LMSProject2\backend\app\temp\dotnet_base_project\bin\Release\net9.0\dotnet_base_project.pdb
+D:\pythonprojects\Campus connection\LMSProject2\backend\app\temp\dotnet_base_project\obj\Release\net9.0\dotnet_base_project.GeneratedMSBuildEditorConfig.editorconfig
+D:\pythonprojects\Campus connection\LMSProject2\backend\app\temp\dotnet_base_project\obj\Release\net9.0\dotnet_base_project.AssemblyInfoInputs.cache
+D:\pythonprojects\Campus connection\LMSProject2\backend\app\temp\dotnet_base_project\obj\Release\net9.0\dotnet_base_project.AssemblyInfo.cs
+D:\pythonprojects\Campus connection\LMSProject2\backend\app\temp\dotnet_base_project\obj\Release\net9.0\dotnet_base_project.csproj.CoreCompileInputs.cache
+D:\pythonprojects\Campus connection\LMSProject2\backend\app\temp\dotnet_base_project\obj\Release\net9.0\dotnet_base_project.dll
+D:\pythonprojects\Campus connection\LMSProject2\backend\app\temp\dotnet_base_project\obj\Release\net9.0\refint\dotnet_base_project.dll
+D:\pythonprojects\Campus connection\LMSProject2\backend\app\temp\dotnet_base_project\obj\Release\net9.0\dotnet_base_project.pdb
+D:\pythonprojects\Campus connection\LMSProject2\backend\app\temp\dotnet_base_project\obj\Release\net9.0\dotnet_base_project.genruntimeconfig.cache
+D:\pythonprojects\Campus connection\LMSProject2\backend\app\temp\dotnet_base_project\obj\Release\net9.0\ref\dotnet_base_project.dll

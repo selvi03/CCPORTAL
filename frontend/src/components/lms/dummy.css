@@ -1,0 +1,103 @@
+.cui-statusbar .cui-ctl, .cui-statusbar .cui-ctl-medium,.cui-statusbar .cui-toolbar-buttondock{
+  display: none !important;
+}
+
+.cui-img-container img, .cui-img-cont-float img{
+  display: none !important;
+}
+/* Example CSS to hide full-screen or toolbar elements */
+.embedded-document {
+  position: relative;
+  display: inline-block;
+  z-index: 9999;
+  width: 100%;
+  height: 510px;
+}
+
+.svg-icon,.bolt-button{
+  display:none;
+}
+/* Adjust specific elements within the embedded document */
+.embedded-document .fullscreen-button {
+  display: none !important; /* Hide full-screen button */
+}
+
+.embedded-document .toolbar {
+  display: none !important; /* Hide toolbar */
+}
+.custom-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 999;
+}
+
+.custom-modal {
+  background: #2e353b;
+  padding: 20px;
+  border-radius: 10px;
+  width: 500px;
+  color: white;
+}
+
+/* SCROLL CONTAINER */
+.schedule-wrapper {
+  width: 100%;
+  overflow-x: auto;
+  margin-top: 10px;
+  border: 1px solid #cbd5f5;
+}
+
+/* TABLE */
+.schedule-grid {
+  border-collapse: collapse;
+  font-size: 13px;
+  table-layout: fixed;
+  color:black;
+  min-width: 1170px; /* forces horizontal scroll */
+}
+
+/* CELLS */
+.schedule-grid th,
+.schedule-grid td {
+  border: 1px solid #4b5563;
+  padding: 6px;
+  vertical-align: top;
+  word-break: break-word;
+}
+
+/* HEADER */
+.schedule-grid th {
+  background: #9e5353;
+  text-align: center;
+  font-weight: 600;
+}
+
+/* 🔹 DATE COLUMN (NARROW) */
+.col-date {
+  width: 90px;
+  min-width: 90px;
+  max-width: 90px;
+  text-align: center;
+}
+
+/* 🔹 FN / AN COLUMNS (FIXED WIDTH) */
+.col-batch {
+  width: 160px;
+  min-width: 160px;
+  max-width: 160px;
+}
+
+/* TEXT */
+.trainer-name {
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.topic-text {
+  font-size: 12px;
+  line-height: 1.3;
+}
