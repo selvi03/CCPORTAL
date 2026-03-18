@@ -18,6 +18,3 @@ db.sqlite3
 
 *.json
 
-backend/app/views.py
-backend/backend/settings.py
-backend/app/testing.py
