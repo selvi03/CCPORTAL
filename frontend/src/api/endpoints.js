@@ -8638,3 +8638,108 @@ export const getScoreDisplay_API = async (test_name) => {
     params: { test_name }
   });
 };
+
+export const getFilteredQuestions_API = async ({
+  test_type,
+  topic,
+  sub_topic,
+  is_testcase,
+  question_ids
+}) => {
+  console.log("🚀 [API CALL START] getFilteredQuestions_API");
+
+  try {
+    console.log("📌 Step 1: Preparing request payload...");
+    const payload = {
+      test_type,
+      topic,
+      sub_topic,
+      is_testcase,
+      question_ids
+    };
+
+    console.log("➡️ Request Payload:", payload);
+
+    console.log("📌 Step 2: Sending POST request to API...");
+    const res = await axios.post(
+      `${API_URL}/api/get-filtered-questions/`,
+      payload,
+      {
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    console.log("✅ Step 3: API responded successfully");
+    console.log("📥 Full Response:", res);
+    console.log("📦 Response Data:", res.data);
+
+    console.log("🎯 [API CALL END] getFilteredQuestions_API");
+
+    return res.data;
+
+  } catch (err) {
+    console.log("❌ Step 4: Error caught in API call");
+
+    if (err.response) {
+      console.error("⚠️ API Error Response Data:", err.response.data);
+      console.error("⚠️ API Error Status:", err.response.status);
+      console.error("⚠️ API Error Headers:", err.response.headers);
+    } else if (err.request) {
+      console.error("⚠️ No response received from API. Request:", err.request);
+    } else {
+      console.error("⚠️ Error setting up API request:", err.message);
+    }
+
+    console.log("🔴 [API CALL FAILED] getFilteredQuestions_API");
+
+    throw err;
+  }
+};
+
+export const updateQuestion_API_practice = async (data) => {
+  console.log("🚀 [API CALL START] updateQuestion_API");
+
+  try {
+    console.log("📌 Step 1: Preparing request payload...");
+    console.log("➡️ Request Payload:", data);
+
+    console.log("📌 Step 2: Sending PUT request to API...");
+
+    const res = await axios.put(
+      `${API_URL}/api/update-question_api/`,  // ✅ use your base URL
+      data,
+      {
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    console.log("✅ Step 3: API responded successfully");
+    console.log("📥 Full Response:", res);
+    console.log("📦 Response Data:", res.data);
+
+    console.log("🎯 [API CALL END] updateQuestion_API");
+
+    return res.data;
+
+  } catch (err) {
+    console.log("❌ Step 4: Error caught in API call");
+
+    if (err.response) {
+      console.error("⚠️ API Error Response Data:", err.response.data);
+      console.error("⚠️ API Error Status:", err.response.status);
+      console.error("⚠️ API Error Headers:", err.response.headers);
+    } else if (err.request) {
+      console.error("⚠️ No response received from API. Request:", err.request);
+    } else {
+      console.error("⚠️ Error setting up API request:", err.message);
+    }
+
+    console.log("🔴 [API CALL FAILED] updateQuestion_API");
+
+    throw err;
+  }
+};
