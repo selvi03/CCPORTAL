@@ -39323,3 +39323,261 @@ class GetScoreDisplayAPIView(APIView):
                 {"error": "Test not found"},
                 status=status.HTTP_404_NOT_FOUND
             )
+
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from django.views.decorators.csrf import csrf_exempt
+from .models import question_master, question_paper_master
+import traceback
+
+@csrf_exempt
+@api_view(['GET', 'POST'])
+def get_filtered_questions(request):
+
+    print("🚀 API CALLED: get_filtered_questions")
+
+    # =========================
+    # ✅ STEP 1: GET PARAMS
+    # =========================
+    if request.method == 'GET':
+        print("📥 Method: GET")
+        test_type = request.GET.get("test_type")
+        topic = request.GET.get("topic")
+        sub_topic = request.GET.get("sub_topic")
+        is_testcase = request.GET.get("is_testcase")
+        question_ids = request.GET.getlist("question_ids")
+    else:
+        print("📥 Method: POST")
+        test_type = request.data.get("test_type")
+        topic = request.data.get("topic")
+        sub_topic = request.data.get("sub_topic")
+        is_testcase = request.data.get("is_testcase")
+        question_ids = request.data.get("question_ids", [])
+
+    print("➡️ Params:", test_type, topic, sub_topic, is_testcase, question_ids)
+
+    # =========================
+    # ✅ STEP 2: CONVERSIONS
+    # =========================
+    is_testcase_bool = None
+    if isinstance(is_testcase, bool):
+        is_testcase_bool = is_testcase
+    elif isinstance(is_testcase, str):
+        if is_testcase.lower() == "true":
+            is_testcase_bool = True
+        elif is_testcase.lower() == "false":
+            is_testcase_bool = False
+
+    print("🔄 is_testcase_bool:", is_testcase_bool)
+
+    # Convert question_ids
+    if isinstance(question_ids, list):
+        question_ids = [int(q) for q in question_ids]
+    else:
+        question_ids = []
+
+    print("🔢 question_ids:", question_ids)
+
+    # 🚨 Coding validation
+    if test_type == "Coding Test":
+        if topic not in ["Technical", "CompanySpecific"]:
+            print("❌ Invalid topic for Coding Test")
+            return Response(
+                {"error": "Coding Test allowed only for Technical or CompanySpecific"},
+                status=400
+            )
+
+    try:
+        # =========================
+        # ✅ STEP 3: FETCH PAPERS
+        # =========================
+        paper_filter = {
+            "deleted": 0,
+            "test_type": test_type,
+            "topic": topic
+        }
+
+        if sub_topic and sub_topic != "None":
+            paper_filter["sub_topic"] = sub_topic
+        if is_testcase_bool is not None:
+            paper_filter["is_testcase"] = is_testcase_bool
+        print("🔍 paper_filter:", paper_filter)
+
+        papers = question_paper_master.objects.filter(**paper_filter)
+
+        print("📄 Papers count:", papers.count())
+
+        if not papers.exists():
+            return Response({"error": "No question papers found"}, status=404)
+
+        paper_ids = list(papers.values_list('id', flat=True))
+        print("📌 paper_ids:", paper_ids)
+
+        # =========================
+        # ✅ STEP 4: FETCH QUESTIONS
+        # =========================
+        questions = question_master.objects.filter(
+            question_name_id__in=paper_ids,
+            deleted=0
+        )
+
+        print("📊 Questions before filter:", questions.count())
+
+        if question_ids:
+            questions = questions.filter(id__in=question_ids)
+            print("🎯 After question_ids filter:", questions.count())
+
+        if not questions.exists():
+            return Response({"error": "No questions found"}, status=404)
+
+        # =========================
+        # ✅ STEP 5: BUILD RESPONSE
+        # =========================
+        result = []
+
+        for q in questions:
+            print(f"➡️ Processing QID: {q.id}")
+
+            data = {
+                "question_id": q.id,
+                "question_text": q.question_text
+            }
+
+            # =========================
+            # 🔥 MCQ TEST
+            # =========================
+            if test_type == "MCQ Test":
+
+                print("🧠 MCQ logic")
+
+                # ✅ Aptitude + CompanySpecific SAME FORMAT
+                if topic in ["Aptitude", "CompanySpecific"]:
+                    print("📘 Aptitude / CompanySpecific format")
+
+                    data.update({
+                        "options": {
+                            "a": q.option_a,
+                            "b": q.option_b,
+                            "c": q.option_c,
+                            "d": q.option_d
+                        },
+                        "answer": q.answer
+                    })
+
+                elif topic == "Psychometry":
+                    print("📗 Psychometry format")
+
+                    data.update({
+                        "options": {
+                            "a": q.option_a,
+                            "b": q.option_b,
+                            "c": q.option_c,
+                            "d": q.option_d,
+                            "e": q.option_e
+                        },
+                        "mark_method": q.mark_method
+                    })
+
+                elif topic == "Technical":
+                    print("📙 Technical MCQ format")
+
+                                    # If explain_answer exists → treat as code
+                if q.explain_answer:
+                    data.update({
+                        "answer": q.answer if q.answer else "See explanation",
+                        "explain_answer": q.explain_answer
+                    })
+                else:
+                    # If explain_answer empty but answer contains code → move it
+                    if q.answer and "def " in q.answer:
+                        print("⚠️ Moving code from answer → explain_answer")
+
+                        data.update({
+                            "answer": "See explanation",
+                            "explain_answer": q.answer
+                        })
+                    else:
+                        data.update({
+                            "answer": q.answer
+                        })
+
+            # =========================
+            # 🔥 CODING TEST
+            # =========================
+            elif test_type == "Coding Test":
+
+                print("💻 Coding logic")
+
+                data.update({
+                    "answer": q.answer,
+                    "input_format": q.input_format,
+
+                    # ✅ IMPORTANT: SEND AS CODE BLOCK
+                    "explain_answer": {
+                        "type": "code",
+                        "content": q.explain_answer
+                    }
+                })
+
+                if is_testcase_bool:
+                    print("🧪 Testcase mode")
+
+                    data.pop("answer", None)
+
+                    data["test_cases"] = {
+                        "test_case1": q.test_case1,
+                        "test_case2": q.test_case2,
+                        "test_case3": q.test_case3
+                    }
+
+            result.append(data)
+
+        print("✅ FINAL COUNT:", len(result))
+
+        return Response({
+            "total_questions": len(result),
+            "questions": result
+        })
+
+    except Exception as e:
+        print("❌ ERROR:")
+        print(traceback.format_exc())
+        return Response({"error": str(e)}, status=500)
+
+
+@csrf_exempt
+def update_question_api(request):
+    if request.method == "PUT":
+        try:
+            data = json.loads(request.body)
+
+            question_id = data.get("question_id")
+
+            question = question_master.objects.get(id=question_id)
+
+            # Update fields
+            question.question_text = data.get("question_text", question.question_text)
+            question.answer = data.get("answer", question.answer)
+            question.mark_method = data.get("mark_method", question.mark_method)
+
+            # OPTIONS (JSON field assumed)
+            if "options" in data:
+                question.options = data["options"]
+
+            # EXPLANATION
+            if "explain_answer" in data:
+                question.explain_answer = data["explain_answer"]
+
+            # TEST CASES
+            if "test_cases" in data:
+                question.test_cases = data["test_cases"]
+
+            question.save()
+
+            return JsonResponse({"message": "✅ Question updated successfully"})
+
+        except question_master.DoesNotExist:
+            return JsonResponse({"error": "❌ Question not found"}, status=404)
+
+        except Exception as e:
+            return JsonResponse({"error": str(e)}, status=500)
