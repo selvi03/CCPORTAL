@@ -1,40 +1,14 @@
 import React, { useState, useEffect, useRef } from "react";
-import { getTestsByTypeAndDifficulty_API } from "../../api/endpoints";
+import { getTestsByTypeAndDifficulty_API, getFilteredQuestions_API,updateQuestion_API_practice } from "../../api/endpoints";
 import { useNavigate } from "react-router-dom";
 import { Heading6 } from "lucide-react";
 import '../../styles/assessment.css';
 
-// --- Styles & helpers (unchanged) ---
-const tableWrapperStyle = {
-  border: "1px solid #fff",        // Border instead of box-shadow
-  borderRadius: "8px",              // Rounded corners
-  overflow: "hidden",               // Ensures the content stays within the border
-  backgroundColor: "#36404a"       // Background color
-};
-
 const containerStyle = { marginTop: "10px", userSelect: "none", paddingLeft: "24px", paddingRight: "24px" };
-//const tableWrapperStyle = { boxShadow: "0 0 10px rgba(0,0,0,0.25)", borderRadius: "8px", overflow: "hidden", backgroundColor: "#36404a" };
-const dropdownContainerStyle = { 
-  marginBottom: "8px", display: "flex", alignItems: "center" ,gap: "0px", overflowX: "auto"  
-};
-const labelStyle = { marginRight: "3px", marginLeft: "0px", fontWeight: "600", color: "white", fontSize: "15px" };
-const selectStyle = {padding: "6px 12px",
-  fontSize: "14px",
-  borderRadius: "6px",
-  border: "1px solid #ccc",
-  cursor: "pointer",
-  backgroundColor: "#36404a",
-  color: "white",
-  maxWidth: "160px",    // keep within screen
-  minWidth: "120px",    // still readable
-  whiteSpace: "nowrap", // prevent text breaking
-  textOverflow: "ellipsis", };
-const tableStyle = { width: "100%", borderCollapse: "collapse" };
-const theadStyle = { boxShadow: "0 4px 6px -2px rgba(0, 0, 0, 0.3)", position: "relative", zIndex: 1 };
-const headerCellStyle = { textAlign:"center",fontWeight: "bold", padding: "12px 16px",  backgroundColor: "#36404a", color: "white", userSelect: "none", borderBottom: "1px solid rgba(255, 255, 255, 0.3)", borderTop: "1px solid rgba(255, 255, 255, 0.3)" };
+
+
 const rowStyle = { padding: "12px 16px", backgroundColor: "#36404a", userSelect: "none", color: "white" };
 const rowBorderStyle = { borderBottom: "1px solid #ddd" };
-const noDataStyle = { padding: "20px", fontStyle: "italic", color: "white", textAlign: "center", backgroundColor: "#36404a" };
 
 const mapCodingType = (codingType) => {
   if (codingType === "testcases coding") return true;
@@ -47,7 +21,8 @@ const PracticeTable = ({ navState = {}, userRole }) => {
   console.log("print userrole", userRole)
   const navigate = useNavigate();
   const topicLower = (navState.topic || "").toLowerCase();
-
+const [editIndex, setEditIndex] = useState(null);
+const [editedQuestion, setEditedQuestion] = useState({});
   // New helper to treat companyspecific like technical
   const isTechnicalOrCompanySpecific = topicLower === "technical" || topicLower === "companyspecific";
 
@@ -214,7 +189,6 @@ useEffect(() => {
       finalTestType = "MCQ Test";
       finalIsTestcase = false;
     }
-
     setEffectiveTestType(finalTestType);
     setEffectiveIsTestcase(finalIsTestcase);
 
@@ -347,18 +321,87 @@ const [entriesPerPage, setEntriesPerPage] = useState(10);
 useEffect(() => {
   console.log("🎯 selectedQuestions updated:", selectedQuestions);
 }, [selectedQuestions]);
-const handleOpenPopup = (row) => {
-  console.log("📌 Opening popup with row:", row);
-  console.log("📜 Question texts inside row:", row.question_texts);
 
-  if (Array.isArray(row.question_texts)) {
-    setSelectedQuestions([...row.question_texts]); // clone array
-  } else {
+const handleOpenPopup = async (row) => {
+  console.log("📌 Opening popup with row:", row);
+
+  setPopupOpen(true);
+  setSelectedQuestions([]); // clear old data
+
+  try {
+    const res = await getFilteredQuestions_API({
+      test_type: effectiveTestType,
+      topic: formData.topic,
+      sub_topic: formData.sub_topic,
+      is_testcase: effectiveIsTestcase,
+      question_ids: row.question_ids
+    });
+
+    console.log("✅ Full Questions API:", res);
+
+    if (res?.questions) {
+      setSelectedQuestions(res.questions); // ✅ FULL DATA
+    } else {
+      setSelectedQuestions([]);
+    }
+
+  } catch (err) {
+    console.error("❌ Error fetching questions:", err);
     setSelectedQuestions([]);
   }
-  setPopupOpen(true);
 };
 
+const handleEditClick = (q, index) => {
+  setEditIndex(index);
+  setEditedQuestion({ ...q }); // clone full question
+};
+const handleChange = (field, value) => {
+  setEditedQuestion(prev => ({
+    ...prev,
+    [field]: value
+  }));
+};
+
+// for options
+const handleOptionChange = (key, value) => {
+  setEditedQuestion(prev => ({
+    ...prev,
+    options: {
+      ...prev.options,
+      [key]: value
+    }
+  }));
+};
+
+
+
+const handleUpdate = async () => {
+  try {
+    const payload = {
+      question_id: editedQuestion.question_id,
+      question_text: editedQuestion.question_text,
+      answer: editedQuestion.answer,
+      options: editedQuestion.options,
+      explain_answer: editedQuestion.explain_answer,
+      mark_method: editedQuestion.mark_method,
+      test_cases: editedQuestion.test_cases
+    };
+
+    await updateQuestion_API_practice(payload);
+
+    alert("✅ Updated Successfully");
+
+    // refresh UI
+    setSelectedQuestions(prev =>
+      prev.map((q, i) => (i === editIndex ? editedQuestion : q))
+    );
+
+    setEditIndex(null);
+
+  } catch (err) {
+    console.error(err);
+  }
+};
   return (
     <div style={containerStyle}>
       <div className="container-styles">
@@ -642,8 +685,7 @@ style={{
   
 </div>
 
-
-        {popupOpen && (
+{popupOpen && (
   <div
     style={{
       position: "fixed",
@@ -651,54 +693,188 @@ style={{
       left: 0,
       width: "100%",
       height: "100%",
-      backgroundColor: "rgba(0, 0, 0, 0.6)", // slightly darker backdrop
+      backgroundColor: "rgba(0, 0, 0, 0.6)",
       display: "flex",
       justifyContent: "center",
       alignItems: "center",
       zIndex: 1000,
       padding: "20px",
     }}
-    onClick={() => setPopupOpen(false)} // close on background click
+    onClick={() => setPopupOpen(false)}
   >
     <div
       style={{
-        backgroundColor: "#1e1e1e", // dark card style
+        backgroundColor: "#1e1e1e",
         padding: "24px",
         color: "white",
         borderRadius: "12px",
-        maxWidth: "700px",
+        maxWidth: "750px",
         width: "100%",
         maxHeight: "80%",
         overflowY: "auto",
-        boxShadow: "0 8px 20px rgba(0,0,0,0.5)",
-        animation: "fadeIn 0.3s ease-in-out",
       }}
-      onClick={(e) => e.stopPropagation()} // prevent closing when clicking inside
+      onClick={(e) => e.stopPropagation()}
     >
-      <h6 style={{ marginBottom: "16px", borderBottom: "1px solid #444", paddingBottom: "8px" }}>
+      <h6 style={{ marginBottom: "16px", borderBottom: "1px solid #444" }}>
         📘 Questions for Selected Test
       </h6>
 
-      <ul style={{ paddingLeft: "20px", lineHeight: "1.6", fontSize:"14px" }}>
-        {selectedQuestions.map((q, idx) => (
-          <li
-            key={idx}
-            style={{
-              marginBottom: "12px",
-              background: "#2a2a2a",
-              padding: "10px",
-              borderRadius: "6px",
-              border: "1px solid #444",
-            }}
-          >
-            <strong style={{ color: "#f1a128", marginRight: "8px" }}>
-              Q{idx + 1}.
-            </strong>
-            {q}
-          </li>
-        ))}
-      </ul>
+      {selectedQuestions.map((q, idx) => (
+        <div
+          key={idx}
+          style={{
+            marginBottom: "15px",
+            background: "#2a2a2a",
+            padding: "12px",
+            borderRadius: "6px",
+          }}
+        >
+          {/* QUESTION */}
+          <div>
+            <strong style={{ color: "#f1a128" }}>Q{idx + 1}.</strong>
 
+            {editIndex === idx ? (
+              <textarea
+                value={editedQuestion.question_text || ""}
+                onChange={(e) =>
+                  handleChange("question_text", e.target.value)
+                }
+                style={{ width: "100%", marginTop: "5px" }}
+              />
+            ) : (
+              <span style={{ marginLeft: "5px" }}>{q.question_text}</span>
+            )}
+          </div>
+
+          {/* OPTIONS */}
+          {q.options && (
+            <div style={{ marginTop: "8px", paddingLeft: "10px" }}>
+              {Object.entries(q.options).map(([key, val]) => (
+                <div key={key}>
+                  <strong>{key.toUpperCase()}:</strong>
+
+                  {editIndex === idx ? (
+                    <input
+                      value={editedQuestion.options?.[key] || ""}
+                      onChange={(e) =>
+                        handleOptionChange(key, e.target.value)
+                      }
+                      style={{ marginLeft: "5px", width: "80%" }}
+                    />
+                  ) : (
+                    <span style={{ marginLeft: "5px" }}>{val}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* ANSWER */}
+          {q.answer && (
+            <div style={{ marginTop: "6px", color: "#4caf50" }}>
+              <strong>Answer:</strong>
+
+              {editIndex === idx ? (
+                <input
+                  value={editedQuestion.answer || ""}
+                  onChange={(e) =>
+                    handleChange("answer", e.target.value)
+                  }
+                  style={{ marginLeft: "5px" }}
+                />
+              ) : (
+                <span style={{ marginLeft: "5px" }}>{q.answer}</span>
+              )}
+            </div>
+          )}
+
+          {/* EXPLANATION */}
+          {q.explain_answer && (
+            <div style={{ marginTop: "6px" }}>
+              <strong style={{ color: "#03a9f4" }}>Explanation:</strong>
+
+              {editIndex === idx ? (
+                <textarea
+                  value={
+                    typeof editedQuestion.explain_answer === "object"
+                      ? editedQuestion.explain_answer?.content || ""
+                      : editedQuestion.explain_answer || ""
+                  }
+                  onChange={(e) =>
+                    handleChange("explain_answer", e.target.value)
+                  }
+                  style={{ width: "100%", marginTop: "5px" }}
+                />
+              ) : (
+                <pre
+                  style={{
+                    background: "#000",
+                    color: "#00ff90",
+                    padding: "10px",
+                    borderRadius: "6px",
+                  }}
+                >
+                  {typeof q.explain_answer === "object"
+                    ? q.explain_answer.content
+                    : q.explain_answer}
+                </pre>
+              )}
+            </div>
+          )}
+
+          {/* BUTTONS */}
+          <div style={{ marginTop: "10px" }}>
+            {editIndex === idx ? (
+              <>
+                <button
+                  onClick={handleUpdate}
+                  style={{
+                    marginRight: "10px",
+                    background: "#4caf50",
+                    border: "none",
+                    padding: "5px 10px",
+                    color: "#fff",
+                    borderRadius: "5px",
+                    cursor: "pointer",
+                  }}
+                >
+                  💾 Save
+                </button>
+
+                <button
+                  onClick={() => setEditIndex(null)}
+                  style={{
+                    background: "#f44336",
+                    border: "none",
+                    padding: "5px 10px",
+                    color: "#fff",
+                    borderRadius: "5px",
+                    cursor: "pointer",
+                  }}
+                >
+                  ❌ Cancel
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => handleEditClick(q, idx)}
+                style={{
+                  background: "#f1a128",
+                  border: "none",
+                  padding: "5px 10px",
+                  color: "#fff",
+                  borderRadius: "5px",
+                  cursor: "pointer",
+                }}
+              >
+                ✏️ Edit
+              </button>
+            )}
+          </div>
+        </div>
+      ))}
+
+      {/* CLOSE BUTTON */}
       <div style={{ textAlign: "right" }}>
         <button
           onClick={() => setPopupOpen(false)}
@@ -707,14 +883,10 @@ style={{
             padding: "8px 16px",
             backgroundColor: "#f1a128",
             color: "#fff",
-            fontWeight: "bold",
             border: "none",
             borderRadius: "8px",
             cursor: "pointer",
-            transition: "background 0.3s",
           }}
-          onMouseOver={(e) => (e.target.style.backgroundColor = "#d48806")}
-          onMouseOut={(e) => (e.target.style.backgroundColor = "#f1a128")}
         >
           Close ✖
         </button>
@@ -722,7 +894,6 @@ style={{
     </div>
   </div>
 )}
-
 
     </div>
   );
