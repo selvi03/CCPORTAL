@@ -890,6 +890,9 @@ path(
     name="validate_fix_questions"
 ),
  path('api/get-score-display/', views.GetScoreDisplayAPIView.as_view(), name='get-score-display'),
+ path('api/get-filtered-questions/', views.get_filtered_questions, name='get_filtered_questions'),
+path('api/update-question_api/', views.update_question_api),
+
 ]
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
