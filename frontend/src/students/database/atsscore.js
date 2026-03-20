@@ -109,10 +109,10 @@ const downloadPDF = () => {
 
 
   return (
-    <div style={styles.container}>
+    <div className='form-ques'>
       <h2 style={styles.title}>ATS Resume Checker</h2>
 
-      <div style={styles.uploadBox}>
+      <div className='form-ques'>
         <input
           type="file"
           accept=".pdf,.doc,.docx"
@@ -125,7 +125,7 @@ const downloadPDF = () => {
           onClick={handleResumeUpload}
           disabled={loading}
         >
-          {loading ? "Analyzing..." : "Check ATS Score"}
+          {loading ? "Analyzing..." : "Check Score"}
         </button>
       </div>
 
@@ -219,8 +219,8 @@ const styles = {
 
   button: {
     padding: "10px 20px",
-    backgroundColor: "#007bff",
-    color: "#fff",
+    backgroundColor: "orange",
+    color: "black",
     border: "none",
     borderRadius: "5px",
     cursor: "pointer",
