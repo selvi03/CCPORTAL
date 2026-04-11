@@ -892,6 +892,7 @@ path(
  path('api/get-score-display/', views.GetScoreDisplayAPIView.as_view(), name='get-score-display'),
  path('api/get-filtered-questions/', views.get_filtered_questions, name='get_filtered_questions'),
 path('api/update-question_api/', views.update_question_api),
+path('api/download-student-report/<int:college_id>/', views.DownloadStudentReportView.as_view()),
 
 ]
 if settings.DEBUG:
