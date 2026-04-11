@@ -18738,6 +18738,12 @@ def normalize_mark(value):
 
 from openpyxl.utils import get_column_letter
 from django.utils.text import slugify
+from openpyxl.drawing.image import Image as XLImage
+from openpyxl.styles import Font, Alignment
+import tempfile
+from PIL import Image
+from openpyxl.utils import get_column_letter
+
 @api_view(['GET'])
 def get_tests_reports_by_college1(request):
     college_id = request.GET.get('college_id')
@@ -18750,6 +18756,1142 @@ def get_tests_reports_by_college1(request):
     batch_nos = request.GET.get('batch_no')  # Capture multiple batch numbers
     created_by_role = request.GET.get('created_by_role') 
     inactive = request.GET.get('inactive') 
+
+# ✅ Apply year filter
+
+    if not college_id:
+        return Response({'error': 'college_id parameter is required'}, status=400)
+    
+    if start_date:
+        start_date = parse_date(start_date)
+    if end_date:
+        end_date = parse_date(end_date)
+
+    if start_date and end_date:
+        if start_date > end_date:
+            return Response({'error': 'start_date cannot be greater than end_date'}, status=400)
+
+    # ✅ Apply filters to students (filter by college and department)
+   
+    department_list = []
+    #if department_ids and department_ids.lower() != "all":
+       # department_list = [int(dep) for dep in department_ids.split(',') if dep.isdigit()]
+   
+    if department_ids and department_ids.lower() != "all":
+        department_list = [int(dep) for dep in department_ids.split(',') if dep.isdigit()]
+    else:
+        department_list = []
+
+    
+    if years is None or years.lower() == "all":
+        year_list = []
+    else:
+        year_list = [y.strip() for y in years.split(',') if y.strip()]
+
+    if batch_nos is None or batch_nos.lower() == "all":
+        batch_list = []
+    else:
+        batch_list = [b.strip() for b in batch_nos.split(',') if b.strip()]
+    if not question_types:
+        question_type_list = ["Aptitude", "Technical", "Softskills"]
+    else:
+        question_type_list = question_types.split(',')
+
+    # ✅ Ensure "All" behaves correctly
+    if "All" in question_type_list:
+        question_type_list = ["Aptitude", "Technical", "Softskills"]
+  #  question_type_list = question_types.split(',') if question_types else []
+
+    # ✅ Apply filters to students (filter by college and department)
+    student_filter = Q(deleted=0, college_id=college_id)
+    if department_list:
+        student_filter &= Q(department_id__in=department_list)
+    if year_list:
+        student_filter &= Q(year__in=year_list)
+    if batch_list:
+        student_filter &= Q(batch_no__in=batch_list)
+
+    # Add a subquery to filter tests_candidates_map
+    active_tests_filter = tests_candidates_map.objects.filter(
+        deleted=0,
+        student_id=OuterRef('id'),
+        is_active=True
+    ).exclude(created_by='Student')
+    inactive_students = candidate_master.objects.filter(
+        student_filter,deleted=0
+    ).exclude(
+        Exists(active_tests_filter)
+    ).values(
+        'students_name', 'registration_number', 'department_id__department', 'year',  'user_name',
+        #'email_id', 'mobile_number', 
+    )
+
+    # Modify the `all_students` query to include the condition
+    all_students = candidate_master.objects.filter(
+        student_filter,
+        Exists(active_tests_filter)
+    ).values(
+        'id', 'registration_number', 'students_name', 'user_name', 'department_id__department', 'year',
+       # 'email_id', 'mobile_number', 'batch_no'
+    )
+    if not all_students.exists():
+        return Response({'message': 'No students found for the given college'}, status=404)
+    
+    test_filter = Q()
+   
+    
+    if question_type_list:
+        if "All" in question_type_list:
+            question_type_list = ["Aptitude", "Technical", "Softskills"]
+        test_filter &= Q(question_type_id__question_type__in=question_type_list)
+
+    # Fetch test details
+    test_details = test_master.objects.filter(test_filter).values(
+        'test_name', 'question_type_id__question_type', 'skill_type_id__skill_type'
+    )
+
+    # Create mappings for skill type and question type
+    test_skill_map = {
+        test['test_name']: test['skill_type_id__skill_type'][0] if test['skill_type_id__skill_type'] else "U"
+        for test in test_details
+    }
+    test_type_map = {
+        test['test_name']: test['question_type_id__question_type'] for test in test_details
+    }
+
+    # Identify which tests are aptitude vs technical
+    aptitude_tests = [
+        test['test_name'] for test in test_details
+        if test['question_type_id__question_type'] == 'Aptitude'
+    ]
+    technical_tests = [
+        test['test_name'] for test in test_details
+        if test['question_type_id__question_type'] == 'Technical'
+    ]
+
+    softskill_tests = [
+        test['test_name'] for test in test_details
+        if test['question_type_id__question_type'] == 'Softskills'
+    ]
+    
+
+   # print('Softskill tests: ', softskill_tests)
+    # ✅ Ensure "All" behaves correctly by only keeping categories with actual test names
+    if "All" in question_type_list:
+        question_type_list = []
+        if aptitude_tests:
+            question_type_list.append("Aptitude")
+        if technical_tests:
+            question_type_list.append("Technical")
+        if softskill_tests:
+            question_type_list.append("Softskills")
+
+    print("Filtered Question Types After Removing Empty Categories:", question_type_list)  # Debugging
+
+
+    test_report_filter = Q(deleted=0, college_id=college_id, is_active=True)
+    
+    
+     
+    test_report_filter &= Q(test_name__in=[t['test_name'] for t in test_details])
+
+
+    if department_list:
+        test_report_filter &= Q(student_id__department_id__in=department_list)
+
+
+   # if question_type:
+       # test_report_filter &= Q(test_name__in=[t['test_name'] for t in test_details])
+
+    if start_date and end_date:
+        test_report_filter &= Q(dtm_start_test__date__range=[start_date, end_date])  # ✅ Apply user-selected date range
+
+    if year_list:
+        test_report_filter &= Q(year__in=year_list)  # ✅ Multiple years in test filter
+    if batch_list:
+        test_report_filter &= Q(student_id__batch_no__in=batch_list)  # ✅ Filter by batch
+    if question_type_list:
+        test_filter &= Q(question_type_id__question_type__in=question_type_list)  # ✅ Always include default test types
+
+    user_roles = {
+        user['user_name']: (user['role'], user['college_id'])
+        for user in login.objects.values('user_name', 'role', 'college_id')
+    }
+
+    # Check if role filtering is applied correctly
+    placement_officer_users = [user for user, role in user_roles.items() if role[0] == "Placement Officer"]
+    super_admin_users = [user for user, role in user_roles.items() if role[0] == "Super admin"]
+
+    print("Placement Officer Users:", placement_officer_users)
+    print("Super Admin Users:", super_admin_users)
+
+    if created_by_role == "placement_officer":
+        test_report_filter &= Q(created_by__in=placement_officer_users)
+    elif created_by_role == "super_admin":
+        test_report_filter &= Q(created_by__in=super_admin_users)
+
+    test_reports = tests_candidates_map.objects.filter(test_report_filter,deleted=0).values(
+        'test_name', 'student_id__id', 'avg_mark', 'capture_duration',
+        'dtm_start_test', 'dtm_start', 'dtm_end', 'year',
+        'student_id__batch_no', 'created_by'
+    ).order_by('dtm_start', 'test_name').exclude(created_by='Student')
+
+
+    # Debug filtered test reports
+    attended_student_ids = set(test['student_id__id'] for test in test_reports)
+    #print(f"\nTotal Attended Students in Tests: {len(attended_student_ids)}")
+    if not test_reports.exists():
+        return Response({'message': 'No test reports found for the given filters'}, status=404)
+  
+    for test in test_reports:
+        pass
+        
+    technical_data, aptitude_data, test_wise_data, softskill_data = {}, {}, {}, {}
+
+    # Initialize student data
+    sorted_students = sorted(
+        all_students,
+        key=lambda x: x['department_id__department'] or ""
+    )
+
+   # for student in all_students:
+    for student in sorted_students:
+        student_id = student['id']
+        student_info = {
+            'Candidate': student['students_name'],
+             'Reg_No': student['registration_number'] or "N/A",
+         
+            'Department': student['department_id__department'],
+           'Login ID': student['user_name'],
+            'year': student['year'],
+           
+        }
+        technical_data[student_id] = student_info.copy()
+        aptitude_data[student_id] = student_info.copy()
+        softskill_data[student_id] = student_info.copy()
+
+    # Create a lookup for student info
+    student_map = {student['id']: student for student in all_students}
+
+    # Process test reports
+    for report in test_reports:
+        test_name = str(report['test_name'])
+        student_id = report['student_id__id']
+        avg_mark = float(report['avg_mark']) if report['avg_mark'] else 0.0
+        formatted_test_name = f"{test_name}_{test_skill_map.get(test_name, 'U')}"
+
+        # Store aptitude data if it's an aptitude test
+        if test_name in aptitude_tests and student_id in aptitude_data:
+            aptitude_data[student_id][formatted_test_name] = avg_mark
+
+        # Store technical data if it's a technical test
+        if test_name in technical_tests and student_id in technical_data:
+            technical_data[student_id][formatted_test_name] = avg_mark
+
+        # Store technical data if it's a technical test
+        if test_name in softskill_tests and student_id in softskill_data:
+            softskill_data[student_id][formatted_test_name] = avg_mark
+
+        # For the test-wise sheet
+        if test_name not in test_wise_data:
+            test_wise_data[test_name] = []
+
+        student = student_map.get(student_id, {})
+        test_wise_data[test_name].append({
+            "Test Name": test_name,
+            "College Name": college_master.objects.get(id=college_id).college,
+           #  "Batch No": report.get('student_id__batch_no', ''),
+            "Department": student.get('department_id__department', ''),
+            "Year": report['year'],
+            "Student Name": student.get('students_name', ''),
+            "User Name": student.get('user_name', ''),
+            "Email": student.get('email_id', ''),
+            "Mobile": student.get('mobile_number', ''),
+            "Registration Number": student.get('registration_number', ''),
+            "Average Mark": avg_mark,
+            "Capture Duration": report['capture_duration'],
+            "Student Start Test": (
+                report['dtm_start_test'].strftime('%d-%m-%Y %I:%M %p') if report['dtm_start_test'] else ""
+            ),
+            "Test Start Time": (
+                report['dtm_start'].strftime('%d-%m-%Y %I:%M %p') if report['dtm_start'] else ""
+            ),
+            "Test End Time": (
+                report['dtm_end'].strftime('%d-%m-%Y %I:%M %p') if report['dtm_end'] else ""
+            )
+        })
+
+     # Step 1: Build assigned test counts per student per category
+    # 1️⃣ Build a mapping: test_name → question_type (Aptitude / Technical / Softskills)
+    test_qtype_map = dict(
+        test_master.objects.values_list('test_name', 'question_type_id__question_type')
+    )
+
+    # 2️⃣ Get assigned tests (no join here)
+    assigned_tests = tests_candidates_map.objects.filter(
+        deleted=0,
+        student_id__in=[s['id'] for s in all_students]
+    ).exclude(created_by='Student').values('student_id', 'test_name')
+
+    # 3️⃣ Count per student per question type
+    assigned_counts = {}
+    for entry in assigned_tests:
+        sid = entry['student_id']
+        qtype = test_qtype_map.get(entry['test_name'])  # look up from mapping
+        if sid not in assigned_counts:
+            assigned_counts[sid] = {"Aptitude": 0, "Technical": 0, "Softskills": 0}
+        if qtype in assigned_counts[sid]:
+            assigned_counts[sid][qtype] += 1
+
+    # 4️⃣ Compute averages (safe divide)
+    for student_id in aptitude_data.keys():
+        # Attended scores
+        apti_scores = [
+            val for key, val in aptitude_data[student_id].items()
+            if isinstance(val, (int, float))
+        ]
+        tech_scores = [
+            val for key, val in technical_data[student_id].items()
+            if isinstance(val, (int, float))
+        ]
+        soft_scores = [
+            val for key, val in softskill_data[student_id].items()
+            if isinstance(val, (int, float))
+        ]
+
+        # Denominators
+        assigned_apti = assigned_counts.get(student_id, {}).get("Aptitude", 0)
+        assigned_tech = assigned_counts.get(student_id, {}).get("Technical", 0)
+        assigned_soft = assigned_counts.get(student_id, {}).get("Softskills", 0)
+
+        # Compute safe averages
+        aptitude_data[student_id]['Total_Aptitude_Avg'] = (
+            round(sum(apti_scores) / assigned_apti) if assigned_apti > 0 else 0
+        )
+        technical_data[student_id]['Total_Technical_Avg'] = (
+            round(sum(tech_scores) / assigned_tech) if assigned_tech > 0 else 0
+        )
+        softskill_data[student_id]['Total_Softskills_Avg'] = (
+            round(sum(soft_scores) / assigned_soft) if assigned_soft > 0 else 0
+        )
+
+    # Build a combined "top_students" list with Category
+    # (This actually includes all students, not just "top" by rank)
+    all_students_with_cat = []
+    for student_id, student_info in aptitude_data.items():
+        total_apt = aptitude_data[student_id]['Total_Aptitude_Avg']
+        total_tech = technical_data[student_id]['Total_Technical_Avg']
+        total_soft = softskill_data[student_id]['Total_Softskills_Avg']
+        # Calculate total_avg based on question_type
+        
+       
+        # Determine selected question types
+        selected_question_types = question_type_list  # Already a list from request
+
+        # Calculate total_avg based on selected question types
+        scores_to_avg = []
+
+        if "Aptitude" in selected_question_types:
+            scores_to_avg.append(total_apt)
+        if "Technical" in selected_question_types:
+            scores_to_avg.append(total_tech)
+        if "Softskills" in selected_question_types:
+            scores_to_avg.append(total_soft)
+
+        # Compute total_avg safely
+        total_avg = round(sum(scores_to_avg) / len(scores_to_avg)) if scores_to_avg else 0
+
+        # Assign category
+        if total_apt >= 70 and total_tech >= 70:
+            category = "A"
+        elif (
+            (total_apt >= 50 and total_tech >= 50) or
+            (total_apt >= 50 and total_tech >= 70) or
+            (total_apt >= 70 and total_tech >= 50) 
+            
+        ):
+            category = "B"
+        elif (
+           (total_apt >= 30 and total_tech >= 30) or
+           (total_apt >= 30 and total_tech >= 50) or
+           (total_apt >= 50 and total_tech >= 30) 
+            
+        ):
+             category = "C"
+
+        else:
+            total_apt < 30 and total_tech < 30
+
+            category = "D"
+
+        all_students_with_cat.append({
+             'Candidate': student_info['Candidate'],
+             'Reg_No': student_info['Reg_No'],
+            'Department': student_info['Department'],
+            'Year': student_info['year'],
+              'Total_Aptitude_Avg': total_apt,
+            'Total_Technical_Avg': total_tech,
+            'Total_Softskills_Avg': total_soft,
+            'Total_Avg': total_avg,
+            'Category': category
+        })
+
+    # Group scores by skill type
+    tech_skill_scores = {}
+    for test_name, score in technical_data[student_id].items():
+        if isinstance(score, (int, float)):
+            skill = test_skill_map.get(test_name, "Unknown")
+            tech_skill_scores.setdefault(skill, []).append(score)
+
+    # Compute total technical average
+    flat_tech_scores = [s for scores in tech_skill_scores.values() for s in scores]
+    technical_data[student_id]['Total_Technical_Avg'] = round(
+        sum(flat_tech_scores) / len(flat_tech_scores)
+    ) if flat_tech_scores else 0
+
+    # Store skill-wise averages
+    for skill, scores in tech_skill_scores.items():
+        technical_data[student_id][f"Technical_{skill}_Avg"] = round(sum(scores) / len(scores))
+    # For aptitude_data[student_id]
+    apt_skill_scores = {}
+    for test_name, score in aptitude_data[student_id].items():
+        if isinstance(score, (int, float)):
+            skill = test_skill_map.get(test_name, "Unknown")
+            apt_skill_scores.setdefault(skill, []).append(score)
+
+    flat_apt_scores = [s for scores in apt_skill_scores.values() for s in scores]
+    aptitude_data[student_id]['Total_Aptitude_Avg'] = round(
+        sum(flat_apt_scores) / len(flat_apt_scores)
+    ) if flat_apt_scores else 0
+
+    # Store skill-wise
+    for skill, scores in apt_skill_scores.items():
+        aptitude_data[student_id][f"Aptitude_{skill}_Avg"] = round(sum(scores) / len(scores))
+
+    # Sort all students by Total_Avg in descending order
+    all_students_with_cat_sorted = sorted(
+        all_students_with_cat,
+       # key=lambda x: x['Department']
+        key=lambda x: x['Total_Avg'],  # Sort by Total_Avg
+        reverse=True                  # Descending order
+    )
+    def deduplicate_by_regno(data_list, key='Reg_No'):
+        """Return a list of dicts with unique registration numbers."""
+        seen = set()
+        unique_list = []
+        for student in data_list:
+            reg_no = str(student.get(key, '')).strip()
+            if reg_no and reg_no not in seen:
+                seen.add(reg_no)
+                unique_list.append(student)
+        return unique_list
+
+    # Filter only Category A students
+    # Filter only Category A and B students
+    category_a_students = [student for student in all_students_with_cat_sorted if student['Category'] == "A"]
+    category_b_students = [student for student in all_students_with_cat_sorted if student['Category'] == "B"]
+
+    total_students = len(all_students_with_cat_sorted)
+    top_25_percent_count = max(1, int(total_students * 0.25))  # At least 1 student
+
+    # If Category A students are enough, take only from Category A
+    if len(category_a_students) >= top_25_percent_count:
+        top_students_filtered = category_a_students[:top_25_percent_count]
+    else:
+        # If Category A doesn't have enough students, fill the remaining slots with Category B students
+        remaining_count = top_25_percent_count - len(category_a_students)
+        top_students_filtered = category_a_students + category_b_students[:remaining_count]
+
+    # ✅ Convert Top Students Data into DataFrame
+    top_students_df = pd.DataFrame(top_students_filtered)
+    aptitude_df = pd.DataFrame.from_dict(aptitude_data, orient='index')
+    technical_df = pd.DataFrame.from_dict(technical_data, orient='index')
+    softskill_df = pd.DataFrame.from_dict(softskill_data, orient='index')
+    
+    if aptitude_df.empty:
+        aptitude_df = pd.DataFrame([{"Message": "No aptitude data available"}])
+
+    if technical_df.empty:
+        technical_df = pd.DataFrame([{"Message": "No technical data available"}])
+
+    if softskill_df.empty:
+        softskill_df = pd.DataFrame([{"Message": "No soft skills data available"}])
+
+        
+    top_students_df = pd.DataFrame(top_students_filtered)
+    category_performance_map = {
+        "A": "Creamy",
+        "B": "Good",
+        "C": "Average",
+        "D": "Need Care"
+    }
+
+    # Add performance analysis column
+    for student in all_students_with_cat_sorted:
+        student["Performance Analysis"] = category_performance_map.get(student["Category"], "Unknown")
+
+    if student_id in attended_student_ids:
+        if test_name in aptitude_tests:
+            aptitude_data.setdefault(student_id, {}).update({formatted_test_name: avg_mark})
+        if test_name in technical_tests:
+            technical_data.setdefault(student_id, {}).update({formatted_test_name: avg_mark})
+        if test_name in softskill_tests:
+            softskill_data.setdefault(student_id, {}).update({formatted_test_name: avg_mark})
+    for report in test_reports:
+            test_name = str(report['test_name'])
+            student_id = report['student_id__id']
+            avg_mark = float(report['avg_mark']) if report['avg_mark'] else 0.0
+            formatted_test_name = f"{test_name}_{test_skill_map.get(test_name, 'U')}"
+
+            # ✅ Store in appropriate category **only if student attended**
+            if student_id in attended_student_ids:
+                if test_name in aptitude_tests:
+                    aptitude_data.setdefault(student_id, {}).update({formatted_test_name: avg_mark})
+                if test_name in technical_tests:
+                    technical_data.setdefault(student_id, {}).update({formatted_test_name: avg_mark})
+                if test_name in softskill_tests:
+                    softskill_data.setdefault(student_id, {}).update({formatted_test_name: avg_mark})
+
+        # ✅ Step 5: Remove students with no test records
+    def filter_empty_students(data):
+        """Remove students who have no test scores (all zeros)."""
+        return {k: v for k, v in data.items() if any(isinstance(val, (int, float)) and val > 0 for val in v.values())}
+
+    aptitude_data = filter_empty_students(aptitude_data)
+    technical_data = filter_empty_students(technical_data)
+    softskill_data = filter_empty_students(softskill_data)
+
+        # ✅ Debug: Print attended student IDs and ensure proper type
+    attended_student_ids_str = set(str(student_id) for student_id in attended_student_ids)
+
+     # ✅ Step 2: Filter students for the Growth Report
+    attended_students_data = [
+        student for student in all_students_with_cat_sorted 
+        if str(student['Reg_No']).strip().upper() in attended_student_ids_str
+    ]
+   # ✅ Step 3: Convert to DataFrame for Growth Report
+    growth_report_df = pd.DataFrame(attended_students_data)
+    if growth_report_df.empty:
+        growth_report_df = pd.DataFrame([{"Message": "No Growth Report Data Available"}])
+    
+    if not top_students_filtered:
+        top_students_df = pd.DataFrame([{"Message": "No Top 100 Students Available"}])
+    else:
+        top_students_df = pd.DataFrame(top_students_filtered)
+
+    top_students_df = pd.DataFrame(deduplicate_by_regno(top_students_filtered))
+   
+
+    growth_report_df = pd.DataFrame(deduplicate_by_regno(all_students_with_cat_sorted))
+    college_obj = college_master.objects.filter(id=college_id).first()
+
+    college_name = college_obj.college if college_obj else "College"
+
+    logo_path = None
+
+    if college_obj and college_obj.college_logo:
+        try:
+            image_stream = io.BytesIO(college_obj.college_logo)
+            img = Image.open(image_stream)
+
+            # Convert to RGB (important for Excel compatibility)
+            img = img.convert("RGB")
+
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+            img.save(temp_file.name, format="PNG")
+            temp_file.close()
+
+            logo_path = temp_file.name
+
+        except Exception as e:
+            print("Image conversion error:", e)
+            logo_path = None
+    print("College Name:", college_name)
+    print("Logo Path:", logo_path)
+
+
+    def add_header(ws, college_name, logo_path):
+        ws.insert_rows(1, amount=3)  # reduce rows (no vertical spacing)
+
+        # 👉 College Name in 4th column (D)
+        college_col = 4  # D
+        title_cell = ws.cell(row=1, column=college_col)
+        title_cell.value = college_name
+        title_cell.font = Font(size=16, bold=True)
+        title_cell.alignment = Alignment(horizontal="left", vertical="center")
+
+        # 👉 Logo in 5th column (E) - SAME ROW
+        if logo_path:
+            try:
+                img = XLImage(logo_path)
+                img.height = 50
+                img.width = 100
+
+                # Place in SAME ROW (row=1)
+                logo_col_letter = get_column_letter(5)  # E
+                ws.add_image(img, f"{logo_col_letter}1")
+
+            except Exception as e:
+                print("Logo error:", e)
+
+        # 👉 Header row styling (now shifted)
+        header_row = 4
+        for cell in ws[header_row]:
+            cell.font = Font(bold=True)
+            cell.alignment = Alignment(horizontal="center")       
+    buffer = BytesIO()
+    
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+            def deduplicate_df_by_regno(df, reg_col='Reg_No'):
+                """Keep only the first occurrence of each Reg_No."""
+                return df.drop_duplicates(subset=[reg_col])
+
+            # ------------------- Cumulative Aptitude -------------------
+            if aptitude_data:
+                aptitude_df = pd.DataFrame.from_dict(aptitude_data, orient='index')
+                aptitude_df = deduplicate_df_by_regno(aptitude_df, 'Reg_No')  # Deduplicate
+
+                base_cols = ['Candidate', 'Reg_No', 'Department', 'Login ID', 'year']
+                test_cols = [col for col in aptitude_df.columns if col not in base_cols + ['Total_Aptitude_Avg']]
+                final_cols = base_cols + test_cols + ['Total_Aptitude_Avg']
+                aptitude_df = aptitude_df[final_cols]
+
+                aptitude_df.to_excel(writer, sheet_name="Cumulative Aptitude", index=False)
+
+            # ------------------- Cumulative Technical -------------------
+            if technical_data:
+                technical_df = pd.DataFrame.from_dict(technical_data, orient='index')
+                technical_df = deduplicate_df_by_regno(technical_df, 'Reg_No')  # Deduplicate
+
+                base_cols = ['Candidate', 'Reg_No', 'Department', 'Login ID', 'year']
+                test_cols = [col for col in technical_df.columns if col not in base_cols + ['Total_Technical_Avg']]
+                final_cols = base_cols + test_cols + ['Total_Technical_Avg']
+                technical_df = technical_df[final_cols]
+
+                technical_df.to_excel(writer, sheet_name="Cumulative Technical", index=False)
+
+            # ------------------- Cumulative Softskills -------------------
+            if softskill_data:
+                softskill_df = pd.DataFrame.from_dict(softskill_data, orient='index')
+                softskill_df = deduplicate_df_by_regno(softskill_df, 'Reg_No')  # Deduplicate
+
+                base_cols = ['Candidate', 'Reg_No', 'Department', 'Login ID', 'year']
+                test_cols = [col for col in softskill_df.columns if col not in base_cols + ['Total_Softskills_Avg']]
+                final_cols = base_cols + test_cols + ['Total_Softskills_Avg']
+                softskill_df = softskill_df[final_cols]
+
+                softskill_df.to_excel(writer, sheet_name="Cumulative Softskills", index=False)
+
+            top_students_df.to_excel(writer, sheet_name="Top 100", index=False)
+            # Assume growth_report_df already has 'Total_Aptitude_Avg' and 'Total_Technical_Avg'
+            
+            # Step 1: Deduplicate and prepare growth report
+            growth_report_df = pd.DataFrame(deduplicate_by_regno(all_students_with_cat_sorted))
+
+
+            # Step 6: Write to Excel
+            growth_report_df.to_excel(writer, sheet_name="Overall Report", index=False)
+
+                    
+            if inactive == "true":
+                if not inactive_students.exists():
+                    return Response({'message': 'No inactive students found'}, status=404)
+
+                # Convert queryset to DataFrame
+                df = pd.DataFrame(list(inactive_students))
+
+                # Write to the existing Excel file in buffer
+                df.to_excel(writer, sheet_name="Inactive Sheet", index=False)
+            
+            # ------------------- No Test Attended Students -------------------
+            if inactive_students:
+                no_test_df = pd.DataFrame(list(inactive_students))
+
+                if not no_test_df.empty:
+                    # Rename columns for better Excel format
+                    no_test_df = no_test_df.rename(columns={
+                        'students_name': 'Student Name',
+                        'registration_number': 'Reg No',
+                        'user_name': 'User Name',
+                        'batch_no': 'Batch',
+                        'department_id__department': 'Department',
+                        'year': 'Year'
+                    })
+
+                    no_test_df.to_excel(writer, sheet_name="No Test Attended", index=False)
+
+        # ✅ Step 7: Remove empty cumulative sheets from the workbook
+    buffer.seek(0)
+    wb = load_workbook(buffer)
+    # ✅ Add header to cumulative sheets
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        add_header(ws, college_name, logo_path)
+    if "Cumulative Aptitude" in wb.sheetnames and not aptitude_data:
+        wb.remove(wb["Cumulative Aptitude"])
+    if "Cumulative Technical" in wb.sheetnames and not technical_data:
+        wb.remove(wb["Cumulative Technical"])
+    if "Cumulative Softskills" in wb.sheetnames and not softskill_data:
+        wb.remove(wb["Cumulative Softskills"])
+    if inactive == "true":
+        df.to_excel(writer, sheet_name="Inactive Sheet", index=False)
+        
+    #buffer.seek(0)
+
+    # 2) Load the workbook to add the chart sheets
+   # wb = load_workbook(buffer)
+
+    # ----------------------------------------------------------------------------
+    # APTITUDE REPORT (Quants, Logical, Verbal, Problem Solving, Logical Handling)
+    # ----------------------------------------------------------------------------
+   # Ensure we only create sheets for question types that actually have tests
+    tech_grouped = pd.DataFrame()
+    softskill_grouped = pd.DataFrame()
+    apti_grouped = pd.DataFrame()
+    print("▶ Starting Aptitude Report Generation")
+
+    valid_question_types = {
+        "Aptitude": bool(aptitude_tests),
+        "Technical": bool(technical_tests),
+        "Softskills": bool(softskill_tests),
+    }
+
+    # If "All" is selected, filter out question types that have no tests
+    if "All" in question_type_list:
+        print("🔍 'All' selected in question_type_list. Filtering valid question types with tests.")
+        question_type_list = [qtype for qtype, has_tests in valid_question_types.items() if has_tests]
+        print(f"✅ Filtered question types: {question_type_list}")
+
+    def is_all_zero(df, exclude_columns=[]):
+        """ Returns True if all numeric values in DataFrame (excluding specified columns) are 0 """
+        df_numeric = df.drop(columns=exclude_columns, errors='ignore')  # Drop non-numeric columns
+        return (df_numeric.select_dtypes(include=['number']) == 0).all().all()  # Check all numeric values
+
+    # Now create only relevant sheets
+    if "Aptitude" in question_type_list and aptitude_tests:
+        print("🧠 Aptitude tests found. Processing aptitude data...")
+        
+        aptitude_df_copy = aptitude_df.copy()
+        
+        print("➕ Creating category columns...")
+        aptitude_df_copy["Quants"] = aptitude_df_copy.filter(regex="(?i)quants|quantitative", axis=1).sum(axis=1)
+        aptitude_df_copy["Logical"] = aptitude_df_copy.filter(regex="(?i)logical(?!.*handling)", axis=1).sum(axis=1)
+        aptitude_df_copy["Verbal"] = aptitude_df_copy.filter(regex="(?i)verbal", axis=1).sum(axis=1)
+     
+        print("📊 Grouping and averaging by Department...")
+        apti_grouped = aptitude_df_copy.groupby("Department", as_index=False)[
+            ["Quants", "Logical", "Verbal",  "Total_Aptitude_Avg"]
+        ].mean().round(0)
+
+        print("✅ Grouped Aptitude Data:\n", apti_grouped)
+
+        # Check before adding sheet
+        if not is_all_zero(apti_grouped, exclude_columns=["Department"]):
+            print("✅ Valid aptitude data found. Creating 'Aptitude Report' sheet.")
+            ws_apt = wb.create_sheet("Aptitude Report")
+            ws_apt.append(["Department", "Quants", "Logical", "Verbal",  "Total_Aptitude_Avg"])
+            
+            for _, row in apti_grouped.iterrows():
+                ws_apt.append([
+                    row["Department"], row["Quants"], row["Logical"], row["Verbal"],
+                    row["Total_Aptitude_Avg"]
+                ])
+
+            print("📈 Preparing chart for Aptitude Report...")
+            # after writing header row + data rows to ws_apt:
+            dept_count = len(apti_grouped)
+
+            # department names for x-axis
+            dept_ref = Reference(ws_apt, min_col=1, min_row=2, max_row=dept_count + 1)
+
+            # all numeric columns including header row for titles
+            data_ref = Reference(ws_apt, min_col=2, max_col=4, min_row=1, max_row=dept_count + 1)
+
+            chart_apti = get_chart(chart_type, title="Aptitude Performance", x_title="Department", y_title="Scores")
+            chart_apti.add_data(data_ref, titles_from_data=True)
+            chart_apti.set_categories(dept_ref)
+            #ws_apt.add_chart(chart_apti, "H2")
+
+            print("✅ 'Aptitude Report' sheet and chart created successfully.")
+        else:
+            print("⛔ Skipping Aptitude Report - All data is zero or empty.")
+
+    else:
+        print("⚠️ Aptitude not in question_type_list or no tests found.")
+
+
+    if "Technical" in question_type_list and technical_tests:
+        technical_df_copy = technical_df.copy()
+        technical_df_copy["C"] = technical_df_copy.filter(regex="(?i)\\bC\\b", axis=1).sum(axis=1)
+        technical_df_copy["C++"] = technical_df_copy.filter(regex="(?i)c\+\+", axis=1).sum(axis=1)
+        technical_df_copy["Python"] = technical_df_copy.filter(regex="(?i)python", axis=1).sum(axis=1)
+        technical_df_copy["JAVA"] = technical_df_copy.filter(regex="(?i)java", axis=1).sum(axis=1)
+        technical_df_copy["All Languages"] = technical_df_copy.filter(regex="(?i)all.?languages", axis=1).sum(axis=1)
+
+        tech_grouped = technical_df_copy.groupby("Department", as_index=False)[
+            ["C", "C++", "Python", "JAVA", "All Languages", "Total_Technical_Avg"]
+        ].mean().round(0)
+        
+        # ✅ Check before adding sheet
+        if not is_all_zero(tech_grouped, exclude_columns=["Department"]):
+            ws_tech = wb.create_sheet("Technical Report")
+            ws_tech.append(["Department", "C", "C++", "Python", "JAVA", "All Languages", "Total_Technical_Avg"])
+            for _, row in tech_grouped.iterrows():
+                ws_tech.append([row["Department"], row["C"], row["C++"], row["Python"], row["JAVA"], row["All Languages"], row["Total_Technical_Avg"]])
+            dept_ref = Reference(ws_tech, min_col=1, min_row=2, max_row=len(tech_grouped) + 1)
+            data_ref = Reference(ws_tech, min_col=2, max_col=6, min_row=1, max_row=len(tech_grouped) + 1)
+
+            # Create chart
+            chart_tech = get_chart(chart_type, title="Technical Performance", x_title="Department", y_title="Scores")
+            chart_tech.add_data(data_ref, titles_from_data=True)
+            chart_tech.set_categories(dept_ref)
+          #  ws_tech.add_chart(chart_tech, "H2")
+        else:
+            print("Skipping Technical Report - No valid data")
+
+    # ✅ Only create "SoftSkills Report" if it has non-zero values
+    if "Softskills" in question_type_list:
+        if softskill_tests:  # Ensure we have soft skills tests
+            softskill_df_copy = softskill_df.copy()
+            softskill_df_copy["Communication"] = softskill_df_copy.filter(regex="(?i)communication", axis=1).sum(axis=1)
+            softskill_df_copy["Teamwork"] = softskill_df_copy.filter(regex="(?i)teamwork", axis=1).sum(axis=1)
+            softskill_df_copy["Leadership"] = softskill_df_copy.filter(regex="(?i)leadership", axis=1).sum(axis=1)
+
+            softskill_grouped = softskill_df_copy.groupby("Department", as_index=False)[
+                ["Communication", "Teamwork", "Leadership", "Total_Softskills_Avg"]
+            ].mean().round(0)
+            
+            # ✅ Check if all values are zero before creating the sheet
+            if not is_all_zero(softskill_grouped, exclude_columns=["Department"]):
+                ws_soft = wb.create_sheet("SoftSkills Report")
+                ws_soft.append(["Department", "Communication", "Teamwork", "Leadership", "Total_Softskills_Avg"])
+                for _, row in softskill_grouped.iterrows():
+                    ws_soft.append([row["Department"], row["Communication"], row["Teamwork"], row["Leadership"], row["Total_Softskills_Avg"]])
+                dept_ref = Reference(ws_soft, min_col=1, min_row=2, max_row=len(softskill_grouped) + 1)
+                data_ref = Reference(ws_soft, min_col=2, max_col=4, min_row=1, max_row=len(softskill_grouped) + 1)
+
+                # Create chart
+                chart_soft = get_chart(chart_type, title="Soft Skills Performance", x_title="Department", y_title="Scores")
+                chart_soft.add_data(data_ref, titles_from_data=True)
+                chart_soft.set_categories(dept_ref)
+               # ws_soft.add_chart(chart_soft, "H2")
+            else:
+                print("Skipping SoftSkills Report - No valid data")
+
+        # ✅ Remove "Aptitude Report" if no aptitude tests exist
+        if "Aptitude Report" in wb.sheetnames and not aptitude_tests:
+            wb.remove(wb["Aptitude Report"])
+
+        # ✅ Remove "Technical Report" if no technical tests exist
+        if "Technical Report" in wb.sheetnames and not technical_tests:
+            wb.remove(wb["Technical Report"])
+
+        # ✅ Remove "Softskills Report" if no soft skills tests exist
+        if "SoftSkills Report" in wb.sheetnames and not softskill_tests:
+            wb.remove(wb["SoftSkills Report"])
+
+        # --------------------------------------------------------------------------
+        # CATEGORY REPORT (Department-wise count of A/B/C students)
+        # --------------------------------------------------------------------------
+        # all_students_with_cat has all students + assigned categories
+        df_category = pd.DataFrame(all_students_with_cat)
+
+        # Group by Department and Category to get the number of students
+        group_cat = df_category.groupby(["Department", "Category"]).size().reset_index(name="Count")
+
+        # Pivot so each department is a row, each Category is a column (A, B, C)
+        cat_pivot = group_cat.pivot(index="Department", columns="Category", values="Count").fillna(0)
+        print("pivot",cat_pivot)
+
+        for col in ["A", "B", "C", "D"]:
+            if col not in cat_pivot.columns:
+                cat_pivot[col] = 0
+
+        ws_cat = wb.create_sheet("Category Report")
+        ws_cat.append(["Department", "A", "B", "C", "D"])
+
+        for dept in cat_pivot.index:
+            ws_cat.append([dept,
+                        cat_pivot.loc[dept].get("A", 0),
+                        cat_pivot.loc[dept].get("B", 0),
+                        cat_pivot.loc[dept].get("C", 0),
+                        cat_pivot.loc[dept].get("D", 0)])
+
+        dept_count_cat = len(cat_pivot.index)
+
+        chart_cat = get_chart(chart_type, title="Category Distribution by Department",
+                            x_title="Department", y_title="Number of Students")
+
+                # after writing aptitude data to ws_apt
+        #dept_ref = Reference(ws_apt, min_col=1, min_row=2, max_row=len(apti_grouped)+1)
+        # ✅ Create charts only if corresponding sheet exists
+        ws_apt = None
+        ws_tech = None
+        ws_soft = None
+        ws_cat = None
+
+        dept_ref_apt = None
+        dept_ref_tech = None
+        dept_ref_soft = None
+        dept_ref_cat = None
+
+        dept_count = 0
+        if "Aptitude Report" in wb.sheetnames:
+            ws_apt = wb["Aptitude Report"]
+
+            dept_ref = Reference(
+                ws_apt,
+                min_col=1,
+                min_row=2,
+                max_row=ws_apt.max_row
+            )
+
+            if (chart_type or "").lower() == "pie":
+                pie_data = Reference(
+                    ws_apt,
+                    min_col=5,
+                    max_col=5,
+                    min_row=2,
+                    max_row=ws_apt.max_row
+                )
+                chart_apti = get_chart("pie", title="Average Aptitude per Department")
+                chart_apti.add_data(pie_data, titles_from_data=False)
+                chart_apti.set_categories(dept_ref)
+                ws_apt.add_chart(chart_apti, "H2")
+
+            else:
+                data_ref = Reference(
+                    ws_apt,
+                    min_col=2,
+                    max_col=4,
+                    min_row=1,
+                    max_row=ws_apt.max_row
+                )
+                chart_apti = get_chart(
+                    chart_type,
+                    title="Aptitude Performance",
+                    x_title="Department",
+                    y_title="Scores"
+                )
+                chart_apti.add_data(data_ref, titles_from_data=True)
+                chart_apti.set_categories(dept_ref)
+                ws_apt.add_chart(chart_apti, "H2")
+        
+        if "Technical Report" in wb.sheetnames:
+            ws_tech = wb["Technical Report"]
+
+            if tech_grouped is not None and not tech_grouped.empty:
+                dept_ref_tech = Reference(
+                    ws_tech,
+                    min_col=1,
+                    min_row=2,
+                    max_row=ws_tech.max_row
+                )
+                if (chart_type or "").lower() == "pie":
+                    pie_data = Reference(
+                        ws_tech,
+                        min_col=7,
+                        max_col=7,
+                        min_row=2,
+                        max_row=ws_tech.max_row
+                    )
+                    chart_tech = get_chart("pie", title="Average Technical per Department")
+                    chart_tech.add_data(pie_data, titles_from_data=False)
+                    chart_tech.set_categories(dept_ref_tech)
+                    ws_tech.add_chart(chart_tech, "H2")
+
+                else:
+                    data_ref = Reference(
+                        ws_tech,
+                        min_col=2,
+                        max_col=6,
+                        min_row=1,
+                        max_row=ws_tech.max_row
+                    )
+                    chart_tech = get_chart(
+                        chart_type,
+                        title="Technical Performance",
+                        x_title="Department",
+                        y_title="Scores"
+                    )
+                    chart_tech.add_data(data_ref, titles_from_data=True)
+                    chart_tech.set_categories(dept_ref_tech)
+                    ws_tech.add_chart(chart_tech, "H2")
+        
+        if "SoftSkills Report" in wb.sheetnames:
+            ws_soft = wb["SoftSkills Report"]
+
+            if softskill_grouped is not None and not softskill_grouped.empty:
+                dept_ref_soft = Reference(
+                    ws_soft,
+                    min_col=1,
+                    min_row=2,
+                    max_row=ws_soft.max_row
+                )
+
+                if (chart_type or "").lower() == "pie":
+                    pie_data = Reference(
+                        ws_soft,
+                        min_col=5,
+                        max_col=5,
+                        min_row=2,
+                        max_row=ws_soft.max_row
+                    )
+                    chart_soft = get_chart("pie", title="Average Soft Skills per Department")
+                    chart_soft.add_data(pie_data, titles_from_data=False)
+                    chart_soft.set_categories(dept_ref_soft)
+                    ws_soft.add_chart(chart_soft, "H2")
+
+                else:
+                    data_ref = Reference(
+                        ws_soft,
+                        min_col=2,
+                        max_col=4,
+                        min_row=1,
+                        max_row=ws_soft.max_row
+                    )
+                    chart_soft = get_chart(
+                        chart_type,
+                        title="Soft Skills Performance",
+                        x_title="Department",
+                        y_title="Scores"
+                    )
+                    chart_soft.add_data(data_ref, titles_from_data=True)
+                    chart_soft.set_categories(dept_ref_soft)
+                    ws_soft.add_chart(chart_soft, "H2")
+        if "Category Report" in wb.sheetnames:
+            ws_cat = wb["Category Report"]
+            dept_count = ws_cat.max_row - 1  # ✅ ALWAYS SAFE
+
+            if dept_count > 0:
+                dept_ref_cat = Reference(
+                    ws_cat,
+                    min_col=1,
+                    min_row=2,
+                    max_row=dept_count + 1
+                )
+
+                if (chart_type or "").lower() == "pie":
+                    pie_data = Reference(
+                        ws_cat,
+                        min_col=5,
+                        max_col=5,
+                        min_row=2,
+                        max_row=dept_count + 1
+                    )
+                    chart_cat = get_chart("pie", title="Category D per Department")
+                    chart_cat.add_data(pie_data, titles_from_data=False)
+                    chart_cat.set_categories(dept_ref_cat)
+                    ws_cat.add_chart(chart_cat, "G2")
+
+                else:
+                    nonzero_cols = []
+                    for idx in range(2, 6):  # columns B–E
+                        values = [
+                            ws_cat.cell(row=r, column=idx).value
+                            for r in range(2, dept_count + 2)
+                        ]
+                        if any(v not in (0, None) for v in values):
+                            nonzero_cols.append(idx)
+
+                    if not nonzero_cols:
+                        nonzero_cols = [5]
+
+                    data_ref = Reference(
+                        ws_cat,
+                        min_col=min(nonzero_cols),
+                        max_col=max(nonzero_cols),
+                        min_row=1,
+                        max_row=dept_count + 1
+                    )
+                    chart_cat = get_chart(
+                        chart_type,
+                        title="Category Distribution by Department",
+                        x_title="Department",
+                        y_title="Counts"
+                    )
+                    chart_cat.add_data(data_ref, titles_from_data=True)
+                    chart_cat.set_categories(dept_ref_cat)
+                    ws_cat.add_chart(chart_cat, "G2")
+        else:
+            # bar/clustered – only include nonzero columns
+            # find which category columns have at least one nonzero
+            nonzero_cols = []
+            for idx, cat in enumerate(["A","B","C","D"], start=2):
+                values = [ws_cat.cell(row=r, column=idx).value for r in range(2, dept_count+2)]
+                if any(v not in (0, None) for v in values):
+                    nonzero_cols.append(idx)
+            if not nonzero_cols:
+                nonzero_cols = [5]  # at least D
+
+            min_col = min(nonzero_cols)
+            max_col = max(nonzero_cols)
+            data_ref = Reference(ws_cat, min_col=min_col, max_col=max_col,
+                                min_row=1, max_row=dept_count+1)
+            chart_cat = get_chart(chart_type, title="Category Distribution by Department",
+                                x_title="Department", y_title="Counts")
+            chart_cat.add_data(data_ref, titles_from_data=True)
+            chart_cat.set_categories(dept_ref)
+            ws_cat.add_chart(chart_cat, "G2")
+  
+    for sheet_name in ["Cumulative Aptitude", "Cumulative Technical", "Cumulative Softskills"]:
+        if sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            for col in ws.iter_cols(min_row=4):  # skip header rows
+           # for col in ws.columns:
+                max_length = 0
+                col_letter = get_column_letter(col[0].column)  # column index to letter
+                for cell in col:
+                    try:
+                        if cell.value:
+                            max_length = max(max_length, len(str(cell.value)))
+                    except:
+                        pass
+                adjusted_width = max_length + 5  # padding
+                ws.column_dimensions[col_letter].width = adjusted_width
+    try:
+        college_name = college_master.objects.get(id=college_id).college
+    except college_master.DoesNotExist:
+        college_name = 'College'
+    safe_name = slugify(college_name)
+    filename = f"{safe_name}_report.xlsx"
+
+
+    final_buffer = BytesIO()
+    try:
+        wb.save(final_buffer)
+    except Exception:
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Error"
+        ws.append(["No valid data found or workbook was not initialized."])
+        wb.save(final_buffer)
+
+    final_buffer.seek(0)
+
+    response = HttpResponse(
+        final_buffer.getvalue(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    response['Access-Control-Expose-Headers'] = 'Content-Disposition'
+
+    return response
+
+@api_view(['GET'])
+def get_tests_reports_by_college1old(request):
+    college_id = request.GET.get('college_id')
+    department_ids = request.GET.get('department_id')  # Department filter
+    question_types = request.GET.get('question_type') 
+    start_date = request.GET.get('start_date')  # Start date filter
+    end_date = request.GET.get('end_date')  # End date filter
+    chart_type = request.GET.get('chart_type', 'bar')
+    years = request.GET.get('year')  # Capture multiple years
+    batch_nos = request.GET.get('batch_no')  # Capture multiple batch numbers
+    created_by_role = request.GET.get('created_by_role') 
+    inactive = request.GET.get('inactive') 
+
 # ✅ Apply year filter
 
     if not college_id:
@@ -29890,7 +31032,7 @@ def update_test_employee_reassign(request):
         # Delete previous answers for this test_name and employee_ids
         deleted_answers_count, _ = tests_emp_answer.objects.filter(
             test_name=test_name,
-            emp_id__in=employee_ids
+            emp_id__emp_id__in=employee_ids
         ).delete()
         print(f"Deleted {deleted_answers_count} answer(s) from tests_emp_answer.")
 
@@ -39581,3 +40723,156 @@ def update_question_api(request):
 
         except Exception as e:
             return JsonResponse({"error": str(e)}, status=500)
+        
+import openpyxl
+from django.http import HttpResponse
+from django.views import View
+from django.db.models import Avg
+from .models import tests_candidates_map, candidate_master
+
+
+def get_feedback(avg_mark):
+    if avg_mark >= 90:
+        return "Excellent"
+    elif avg_mark >= 75:
+        return "Good"
+    elif avg_mark >= 50:
+        return "Average"
+    else:
+        return "Poor"
+
+import openpyxl
+from django.http import HttpResponse
+from django.views import View
+from django.db.models import Avg
+from .models import tests_candidates_map, candidate_master
+
+
+def get_feedback(avg_mark):
+    if avg_mark >= 90:
+        return "Excellent"
+    elif avg_mark >= 75:
+        return "Good"
+    elif avg_mark >= 50:
+        return "Average"
+    else:
+        return "Poor"
+
+
+class DownloadStudentReportView(View):
+
+    def get(self, request, college_id):
+        print("STEP 1: API HIT ✅")
+        print("Received college_id:", college_id)
+
+        try:
+            wb = openpyxl.Workbook()
+            print("STEP 2: Workbook created ✅")
+
+            # =======================
+            # SHEET 1: OVERALL
+            # =======================
+            ws1 = wb.active
+            ws1.title = "Overall Performance"
+
+            ws1.append([
+                "Student Name", "Reg No", "Department", "Year",
+                "Total Assigned", "Total Attended", "Overall Avg"
+            ])
+            print("STEP 3: Sheet 1 created ✅")
+
+            # =======================
+            # SHEET 2
+            # =======================
+            ws2 = wb.create_sheet(title="Test Details")
+            print("STEP 4: Sheet 2 created ✅")
+
+            students = candidate_master.objects.filter(
+                college_id=college_id,
+                deleted=0
+            )
+
+            print("STEP 5: Students fetched ✅ Count:", students.count())
+
+            if not students.exists():
+                print("⚠️ No students found for this college_id")
+
+            for student in students:
+                print(f"\n➡️ Processing Student: {student.students_name} ({student.id})")
+
+                student_tests = tests_candidates_map.objects.filter(
+                    student_id=student.id,
+                    college_id=college_id,
+                    deleted=0
+                ).order_by('dtm_start')
+
+                print("   Tests count:", student_tests.count())
+
+                total_assigned = student_tests.count()
+                total_attended = student_tests.filter(is_active=True).count()
+                #overall_avg = student_tests.aggregate(avg=Avg('avg_mark'))['avg'] or 0
+                total_avg_marks = sum([test.avg_mark or 0 for test in student_tests])
+
+                overall_avg = total_avg_marks / total_assigned if total_assigned > 0 else 0
+                print("   Assigned:", total_assigned)
+                print("   Attended:", total_attended)
+                print("   Overall Avg:", overall_avg)
+
+                # -------- SHEET 1 --------
+                ws1.append([
+                    student.students_name,
+                    student.registration_number,
+                    student.department_id.department if student.department_id else "",
+                    student.year,
+                    total_assigned,
+                    total_attended,
+                    round(overall_avg, 2)
+                ])
+
+                # -------- SHEET 2 HEADER --------
+                ws2.append([
+                    f"Student: {student.students_name}",
+                    f"Reg No: {student.registration_number}",
+                    f"Dept: {student.department_id.department if student.department_id else ''}",
+                    f"Year: {student.year}"
+                ])
+
+                ws2.append([
+                    "Date", "Test Name", "Avg Mark", "Growth"
+                ])
+
+                # -------- TEST DATA --------
+                for test in student_tests:
+                    print(f"      Test: {test.test_name}, Avg: {test.avg_mark}")
+
+                    avg_mark = test.avg_mark or 0
+
+                    ws2.append([
+                        test.dtm_start.strftime("%Y-%m-%d") if test.dtm_start else "",
+                        test.test_name,
+                        avg_mark,
+                        get_feedback(avg_mark)
+                    ])
+
+                ws2.append([])
+
+            print("STEP 6: Excel data filled ✅")
+
+            # =======================
+            # RESPONSE
+            # =======================
+            response = HttpResponse(
+                content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            response['Content-Disposition'] = 'attachment; filename=student_report.xlsx'
+
+            print("STEP 7: Saving workbook to response ✅")
+            wb.save(response)
+
+            print("STEP 8: File ready for download ✅")
+
+            return response
+
+        except Exception as e:
+            print("❌ ERROR OCCURRED:", str(e))
+            return HttpResponse(f"Error: {str(e)}")
