@@ -8743,3 +8743,12 @@ export const updateQuestion_API_practice = async (data) => {
     throw err;
   }
 };
+
+export function downloadStudentReportApi(college_id) {
+  return axios.get(
+    `${API_URL}/api/download-student-report/${college_id}/`,
+    {
+      responseType: "blob", // ✅ required for file download
+    }
+  );
+}
